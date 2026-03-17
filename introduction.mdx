@@ -1,0 +1,84 @@
+---
+title: "Mi Tienda Payment Checkout"
+description: "A fullstack payment checkout application integrated with the Wompi payment gateway, supporting product selection, card tokenization, and real-time transaction results."
+---
+
+Mi Tienda Payment Checkout is a production-ready fullstack application that lets customers select a product, enter delivery and card payment details, and receive a real-time payment result. The backend processes transactions through the [Wompi](https://sandbox.wompi.co) payment gateway while the frontend handles card tokenization directly — card data never reaches your servers.
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get the full stack running locally in under 10 minutes.
+  </Card>
+  <Card title="Architecture overview" icon="sitemap" href="/architecture/overview">
+    Understand the two-tier system and how Wompi integrates.
+  </Card>
+  <Card title="Backend deep dive" icon="server" href="/architecture/backend">
+    Clean Architecture layers, modules, Result pattern, and database schema.
+  </Card>
+  <Card title="Frontend deep dive" icon="monitor" href="/architecture/frontend">
+    React pages, Redux slices, checkout flow, and card validation.
+  </Card>
+</CardGroup>
+
+## What the app does
+
+The checkout flow progresses through seven distinct stages:
+
+1. The customer selects a product from the catalog.
+2. They fill in card and delivery details.
+3. They review a payment summary.
+4. The browser tokenizes the card directly with Wompi.
+5. The frontend sends only the token to the backend for server-side processing.
+6. The backend polls until the transaction resolves.
+7. The customer sees an `APPROVED`, `DECLINED`, or `ERROR` result.
+
+<Note>
+  Card data is never sent to the backend. The browser calls Wompi's tokenization endpoint directly using your public key, and only the resulting `cardToken` is forwarded to your API.
+</Note>
+
+## Who it's for
+
+- Developers integrating Wompi into a new or existing e-commerce storefront.
+- Teams evaluating Clean Architecture with NestJS and TypeORM.
+- Anyone who needs a working, tested reference for a card-payment checkout flow.
+
+## Tech stack
+
+| Layer | Technology |
+|-------|------------|
+| Backend | NestJS 11, TypeScript, TypeORM, PostgreSQL 14 |
+| Frontend | React 19, Vite 7, Redux Toolkit 2, React Router 7, React Hook Form 7 |
+| Payments | Wompi — client-side tokenization, server-side processing |
+| Validation | class-validator (backend), React Hook Form + Luhn algorithm (frontend) |
+| API docs | Swagger / OpenAPI at `/api/docs` |
+
+## Wompi security model
+
+Wompi's security model separates public-key operations from private-key operations:
+
+- **Client-side (browser):** Uses `VITE_PAYMENT_PUBLIC_KEY` to call `POST /tokens/cards` directly on Wompi. The response is a short-lived `cardToken`.
+- **Server-side (NestJS):** Uses `PAYMENT_PRIVATE_KEY` to call Wompi's transaction endpoint. An integrity hash is computed as `SHA256(reference + amount + "COP" + integrityKey)` to prevent tampering.
+- **Acceptance token:** Retrieved by the backend via `GET /merchants/{publicKey}` and returned to the frontend before payment submission.
+
+This split means your private key is never exposed to the browser, and raw card numbers never touch your database.
+
+## Repository structure
+
+```
+payment-checkout-app/
+├── backend/    # REST API — NestJS · Clean Architecture · PostgreSQL · TypeORM
+└── frontend/   # SPA — React 19 · Redux Toolkit · Vite
+```
+
+## Test coverage
+
+The backend ships with 125 unit tests across 20 suites, targeting ~99% coverage of business logic.
+
+| Metric | Coverage |
+|--------|----------|
+| Statements | 98.86% |
+| Branches | 98.80% |
+| Functions | 92.53% |
+| Lines | 98.74% |
+
+Run `npm run test:cov --prefix backend` to generate the HTML coverage report at `backend/coverage/lcov-report/index.html`.

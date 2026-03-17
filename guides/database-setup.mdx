@@ -1,0 +1,153 @@
+---
+title: "Database Setup"
+description: "How to create and configure the PostgreSQL database for the Mi Tienda checkout backend."
+---
+
+The backend uses PostgreSQL 14+ with TypeORM. The schema is managed automatically via `synchronize: true` — no migration files are needed. On first startup, a seed function inserts three test products if the table is empty.
+
+## Prerequisites
+
+- PostgreSQL 14 or later installed and running
+- A database user with `CREATE DATABASE` privileges (or an existing database)
+
+---
+
+## Setup steps
+
+<Steps>
+  <Step title="Create a database user and database">
+    Connect to PostgreSQL as a superuser and run:
+
+    ```sql
+    CREATE USER checkout_user WITH PASSWORD 'your_password';
+    CREATE DATABASE checkout_db OWNER checkout_user;
+    GRANT ALL PRIVILEGES ON DATABASE checkout_db TO checkout_user;
+    ```
+
+    Use any username and password you prefer. The values must match the `DB_USER`, `DB_PASS`, and `DB_NAME` variables in `backend/.env`.
+  </Step>
+
+  <Step title="Configure backend environment variables">
+    Edit `backend/.env` with the connection details:
+
+    ```bash
+    DB_HOST=localhost
+    DB_PORT=5432
+    DB_USER=checkout_user
+    DB_PASS=your_password
+    DB_NAME=checkout_db
+    ```
+
+    See [Environment Variables](/guides/environment-variables) for the full variable reference.
+  </Step>
+
+  <Step title="Start the backend">
+    TypeORM connects on startup and automatically creates all tables via `synchronize: true`. No `CREATE TABLE` statements or migration commands are needed.
+
+    ```bash
+    cd backend
+    npm run start:dev
+    ```
+
+    The first time the backend starts with an empty database, the seed function runs and inserts three products.
+  </Step>
+</Steps>
+
+---
+
+## TypeORM configuration
+
+The TypeORM data source is configured with `synchronize: true`, which means TypeORM reads the entity decorators and automatically creates or alters tables on every startup. This is appropriate for development and this project's scope — there are no migration files to run.
+
+<Note>
+For production deployments, consider switching `synchronize` to `false` and generating explicit migrations with `typeorm migration:generate` to maintain full control over schema changes.
+</Note>
+
+---
+
+## Database entities
+
+The schema consists of four tables:
+
+**`products`**
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | UUID | Primary key, auto-generated |
+| `name` | varchar(255) | Product name |
+| `description` | text | Nullable |
+| `price_in_cents` | integer | Price in centavos COP |
+| `image_url` | varchar(500) | Nullable |
+| `stock` | integer | Default 0 |
+| `created_at` / `updated_at` | timestamp | Auto-managed |
+
+**`customers`**
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | UUID | Primary key, auto-generated |
+| `full_name` | varchar(255) | |
+| `email` | varchar(255) | Unique |
+| `phone` | varchar(50) | Nullable |
+| `created_at` | timestamp | Auto-managed |
+
+**`transactions`**
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | UUID | Primary key, auto-generated |
+| `reference` | varchar(100) | Unique, format `TXN-{timestamp}-{random}` |
+| `customer_id` | UUID | Foreign key → customers |
+| `product_id` | UUID | Foreign key → products |
+| `product_amount_in_cents` | integer | Product price snapshot |
+| `base_fee_in_cents` | integer | Base fee snapshot |
+| `delivery_fee_in_cents` | integer | Delivery fee snapshot |
+| `total_in_cents` | integer | Sum of all three amounts |
+| `status` | enum | `PENDING` `APPROVED` `DECLINED` `ERROR` `VOIDED` |
+| `gateway_transaction_id` | varchar(255) | Nullable, Wompi transaction ID |
+| `card_last_four` | varchar(4) | Nullable, for display only |
+| `delivery_address` | varchar(500) | |
+| `delivery_city` | varchar(255) | |
+| `delivery_department` | varchar(255) | |
+| `created_at` / `updated_at` | timestamp | Auto-managed |
+
+**`deliveries`**
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | UUID | Primary key, auto-generated |
+| `transaction_id` | UUID | Foreign key → transactions |
+| `customer_id` | UUID | Foreign key → customers |
+| `address` | varchar(500) | |
+| `city` | varchar(255) | |
+| `department` | varchar(255) | |
+| `status` | enum | `PENDING` `SHIPPED` `DELIVERED` |
+| `created_at` | timestamp | Auto-managed |
+
+---
+
+## Auto-seed on startup
+
+The file `src/database/seeds/product.seed.ts` runs on every startup. If the `products` table is empty (i.e., `COUNT(*) === 0`), it inserts three products:
+
+| Product | Price | Stock |
+|---------|-------|-------|
+| Audífonos Bluetooth Pro | $150.000 COP (15 000 000 centavos) | 10 |
+| Teclado Mecánico RGB | $250.000 COP (25 000 000 centavos) | 5 |
+| Mouse Inalámbrico Ergonómico | $80.000 COP (8 000 000 centavos) | 15 |
+
+If the table already has rows, the seed is skipped and a log message is printed: `Productos ya existen en la BD. Omitiendo seed.`
+
+---
+
+## Currency convention
+
+All monetary values are stored and transmitted in **centavos (COP)**. Column and variable names use the `_in_cents` suffix to make the unit explicit:
+
+```
+$150.000 COP = 15 000 000 centavos
+$3.000 COP   =    300 000 centavos
+$2.000 COP   =    200 000 centavos
+```
+
+The frontend converts centavos to display currency using `formatCurrency(cents)` from `card.utils.ts`, which uses `Intl.NumberFormat` with `es-CO` locale and `COP` currency.

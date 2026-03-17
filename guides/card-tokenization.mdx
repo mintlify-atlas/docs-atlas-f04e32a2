@@ -1,0 +1,175 @@
+---
+title: "Card Tokenization"
+description: "How card data is tokenized directly with Wompi from the browser, keeping card numbers off the backend."
+---
+
+Card data **never reaches the backend**. The frontend tokenizes the card directly with Wompi's API and sends only an opaque token to the server. This keeps card numbers, CVVs, and expiry dates confined to the browser and Wompi's PCI-compliant infrastructure.
+
+<Warning>
+Never log card data (number, CVV, expiry) to the console, to application logs, or to any analytics service. The `tokenizeCard` function in `payment.service.ts` intentionally never logs the card payload.
+</Warning>
+
+---
+
+## Tokenization flow
+
+<Steps>
+  <Step title="Get acceptance token from the backend">
+    Before tokenizing, the frontend fetches a Wompi acceptance token via the backend proxy endpoint.
+
+    ```typescript
+    // frontend/src/services/payment.service.ts
+    async getAcceptanceToken(): Promise<string> {
+        const response = await api.get('/payments/acceptance-token');
+        return response.data.data.acceptanceToken;
+    },
+    ```
+
+    The backend calls Wompi on the server side and returns the token. This token must be included in the final transaction request to confirm acceptance of Wompi's terms.
+
+    The token is stored in Redux via `setAcceptanceToken(token)` and persisted in `checkoutSlice`.
+  </Step>
+
+  <Step title="POST card data directly to Wompi">
+    The frontend sends card data directly to Wompi's tokenization endpoint — the backend is not involved in this request.
+
+    **Endpoint:** `{VITE_PAYMENT_API_URL}/tokens/cards`
+    (default: `https://api-sandbox.co.uat.wompi.dev/v1/tokens/cards`)
+
+    **Authorization header:** `Bearer {VITE_PAYMENT_PUBLIC_KEY}`
+
+    **Request body:**
+
+    | Field | Type | Description |
+    |-------|------|-------------|
+    | `number` | `string` | Card number, spaces stripped |
+    | `cvc` | `string` | 3–4 digit security code |
+    | `exp_month` | `string` | Expiry month (MM) |
+    | `exp_year` | `string` | Expiry year (YY) |
+    | `card_holder` | `string` | Full name of cardholder |
+
+    ```typescript
+    // frontend/src/services/payment.service.ts
+    async tokenizeCard(cardData: {
+        number: string;
+        holder: string;
+        expiryMonth: string;
+        expiryYear: string;
+        cvv: string;
+    }): Promise<string> {
+        const response = await fetch(`${PAYMENT_API_URL}/tokens/cards`, {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${PAYMENT_PUBLIC_KEY}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                number: cardData.number.replace(/\s/g, ''),
+                cvc: cardData.cvv,
+                exp_month: cardData.expiryMonth,
+                exp_year: cardData.expiryYear,
+                card_holder: cardData.holder,
+            }),
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            const errorMessage =
+                errorData?.error?.messages?.join(', ') ||
+                errorData?.error?.type ||
+                'Error al procesar la tarjeta';
+            throw new Error(errorMessage);
+        }
+
+        const data = await response.json();
+
+        if (!data?.data?.id) {
+            throw new Error('No se pudo tokenizar la tarjeta');
+        }
+
+        return data.data.id;
+    },
+    ```
+
+    On success, Wompi returns a token `id` (e.g., `tok_test_XXXX`). The token is stored in Redux via `setCardToken(token)`.
+
+    On failure, the error message is extracted from `error.messages` or `error.type` in the Wompi error response.
+  </Step>
+
+  <Step title="Send only tokens to the backend">
+    With both tokens in hand, the frontend submits the payment to the backend. Raw card data is never included.
+
+    ```typescript
+    // frontend/src/services/payment.service.ts
+    async processPayment(data: {
+        productId: string;
+        customerName: string;
+        customerEmail: string;
+        deliveryAddress: string;
+        deliveryCity: string;
+        deliveryDepartment: string;
+        cardToken: string;        // from Wompi tokenization
+        acceptanceToken: string;  // from acceptance-token endpoint
+        cardLastFour: string;     // last 4 digits, for display only
+    }) {
+        const response = await api.post('/transactions', data);
+        return response.data.data;
+    },
+    ```
+
+    The backend `ProcessPaymentUseCase` uses the `cardToken` and `acceptanceToken` to call Wompi's charge API with the private key — which never leaves the server.
+  </Step>
+
+  <Step title="Poll for final transaction status">
+    Wompi processes payments asynchronously. After submitting, the frontend polls the backend status endpoint until a terminal status is returned.
+
+    **Parameters:**
+    - Maximum attempts: **12**
+    - Interval between attempts: **2,500 ms**
+    - Terminal statuses that stop polling: `APPROVED`, `DECLINED`, `ERROR`, `VOIDED`
+
+    ```typescript
+    // frontend/src/services/payment.service.ts
+    async pollTransactionStatus(
+        transactionId: string,
+        onStatusChange?: (status: string) => void,
+    ): Promise<string> {
+        const MAX_ATTEMPTS = 12;
+        const DELAY_MS = 2500;
+
+        for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+            await new Promise((resolve) => setTimeout(resolve, DELAY_MS));
+
+            try {
+                const response = await api.get(`/transactions/${transactionId}/status`);
+                const { status } = response.data.data;
+
+                if (onStatusChange) onStatusChange(status);
+
+                if (['APPROVED', 'DECLINED', 'ERROR', 'VOIDED'].includes(status)) {
+                    return status;
+                }
+            } catch {
+                // Network error — continue retrying
+            }
+        }
+        return 'ERROR';
+    },
+    ```
+
+    If all 12 attempts complete without reaching a terminal status, `'ERROR'` is returned. Network errors during polling are silently retried.
+
+    The final status is dispatched to Redux via `paymentSuccess(result)` or `paymentFailed(message)`, advancing the flow to step 4.
+  </Step>
+</Steps>
+
+---
+
+## Environment variables used
+
+| Variable | Used in | Purpose |
+|----------|---------|---------|
+| `VITE_PAYMENT_API_URL` | `payment.service.ts` | Base URL for Wompi tokenization endpoint |
+| `VITE_PAYMENT_PUBLIC_KEY` | `payment.service.ts` | Bearer token for Wompi tokenization (safe to expose in browser) |
+
+The public key (`VITE_PAYMENT_PUBLIC_KEY`) is intentionally safe to expose in client-side code — it can only tokenize cards, not charge them. The private key (`PAYMENT_PRIVATE_KEY`) stays in the backend `.env` and is never sent to the browser.

@@ -1,0 +1,181 @@
+---
+title: "Payment Processing"
+description: "How the backend ProcessPaymentUseCase orchestrates the full payment flow from stock check to delivery record."
+---
+
+All payment logic lives in `ProcessPaymentUseCase` (`backend/src/modules/transactions/application/use-cases/process-payment.use-case.ts`). It is triggered by `POST /api/transactions` and orchestrates every step from product verification through delivery record creation.
+
+The use case follows the **Result pattern**: each step returns `Result.ok(value)` or `Result.fail(error)`. The controller never catches exceptions — it checks `result.isFailure` and maps domain errors to HTTP status codes.
+
+---
+
+## Processing steps
+
+<Steps>
+  <Step title="Verify product exists and has stock">
+    The use case calls `productRepo.findById(productId)`. If the product is not found, a `NotFoundError` is returned (maps to HTTP 404). If the product exists but `product.hasStock()` returns `false`, the use case returns a validation error (HTTP 400).
+
+    ```typescript
+    const productResult = await this.getProductWithStock(dto.productId);
+    if (productResult.isFailure) return productResult;
+    ```
+  </Step>
+
+  <Step title="Find or create customer by email">
+    The use case looks up the customer by email using `customerRepo.findByEmail(dto.customerEmail)`. If no customer exists, one is created with `customerRepo.create({ fullName, email })`.
+
+    This ensures idempotent customer records — repeat purchases by the same email address reuse the existing customer row.
+
+    ```typescript
+    let customer = await this.customerRepo.findByEmail(dto.customerEmail);
+    if (!customer) {
+        customer = await this.customerRepo.create({
+            fullName: dto.customerName,
+            email: dto.customerEmail,
+        });
+    }
+    ```
+  </Step>
+
+  <Step title="Calculate total">
+    The total is the sum of three values, all in centavos (COP):
+
+    ```
+    total = product.priceInCents + BASE_FEE_IN_CENTS + DELIVERY_FEE_IN_CENTS
+    ```
+
+    `BASE_FEE_IN_CENTS` and `DELIVERY_FEE_IN_CENTS` are read from environment variables at construction time (defaults: 300 000 and 200 000 centavos respectively, i.e. $3.000 and $2.000 COP).
+
+    ```typescript
+    const totalInCents =
+        Number(product.priceInCents) +
+        Number(this.baseFeeInCents) +
+        Number(this.deliveryFeeInCents);
+    ```
+  </Step>
+
+  <Step title="Create PENDING transaction">
+    A transaction record is inserted into the database with status `PENDING` and a unique reference generated at runtime:
+
+    ```typescript
+    const reference = `TXN-${Date.now()}-${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
+    // Example: TXN-1718000000000-A3B2C1D4E
+    ```
+
+    All monetary breakdown fields are stored separately (`product_amount_in_cents`, `base_fee_in_cents`, `delivery_fee_in_cents`, `total_in_cents`) alongside delivery address fields and the last four digits of the card.
+  </Step>
+
+  <Step title="Call WompiAdapter with SHA-256 integrity hash">
+    The use case calls `paymentGateway.processPayment(...)` (injected as `'PAYMENT_GATEWAY'`, implemented by `WompiAdapter`). The adapter builds a SHA-256 integrity hash before calling Wompi:
+
+    ```
+    hash = SHA256(reference + amount + "COP" + integrityKey)
+    ```
+
+    Where:
+    - `reference` — the `TXN-...` reference generated in the previous step
+    - `amount` — `totalInCents` as a string
+    - `"COP"` — the literal currency string
+    - `integrityKey` — `PAYMENT_INTEGRITY_KEY` from environment variables
+
+    If the adapter call fails (network error, Wompi unreachable), the transaction status is updated to `ERROR` and the use case returns an error mapped to HTTP 502.
+  </Step>
+
+  <Step title="Update transaction status from Wompi response">
+    After receiving the Wompi response, the transaction record is updated with the final status and the Wompi-assigned `gateway_transaction_id`:
+
+    ```typescript
+    await this.transactionRepo.updateStatus(
+        transaction.id,
+        paymentResult.value.status as TransactionStatus,
+        paymentResult.value.gatewayId,
+    );
+    ```
+  </Step>
+
+  <Step title="If APPROVED: create delivery + decrement stock">
+    When the status is `APPROVED`, two side effects are executed:
+
+    1. A delivery record is inserted into the `deliveries` table with status `PENDING`.
+    2. Product stock is decremented using `GREATEST()` to prevent the stock from going below zero under concurrent requests:
+
+    ```typescript
+    if (paymentResult.value.status === 'APPROVED') {
+        await this.deliveryRepo.create({
+            transactionId: transaction.id,
+            customerId: customer.id,
+            address: dto.deliveryAddress,
+            city: dto.deliveryCity,
+            department: dto.deliveryDepartment,
+        });
+        await this.productRepo.decrementStock(product.id);
+    }
+    ```
+
+    The `decrementStock` repository method uses a `GREATEST(stock - 1, 0)` SQL expression to avoid negative stock under race conditions.
+  </Step>
+
+  <Step title="Return transaction result">
+    The use case returns a `Result.ok(...)` with the following shape:
+
+    ```typescript
+    Result.ok({
+        transactionId: transaction.id,
+        reference: transaction.reference,
+        status: paymentResult.value.status,
+        totalInCents,
+        product: { id: product.id, name: product.name },
+        delivery: { address: dto.deliveryAddress, city: dto.deliveryCity },
+    })
+    ```
+
+    The controller wraps this in `{ success: true, data: result.value }` and returns HTTP 201.
+  </Step>
+</Steps>
+
+---
+
+## Transaction status enum
+
+| Status | Meaning |
+|--------|---------|
+| `PENDING` | Transaction created, awaiting Wompi response |
+| `APPROVED` | Payment was successful |
+| `DECLINED` | Payment was declined by the card issuer or Wompi |
+| `ERROR` | Processing error (gateway unreachable, unexpected failure) |
+| `VOIDED` | Transaction was voided after initial approval |
+
+---
+
+## HTTP status codes
+
+| Code | When returned |
+|------|---------------|
+| `200` | Successful GET requests |
+| `201` | Transaction created and processed successfully |
+| `400` | Validation error (e.g., invalid product ID, no stock) |
+| `402` | Payment declined by the gateway |
+| `404` | Resource not found (e.g., product UUID not in database) |
+| `500` | Unexpected internal server error |
+| `502` | Wompi gateway unreachable or returned an unexpected response |
+
+---
+
+## Result pattern
+
+All use cases return `Result<T>` from `src/shared/result.ts`. Controllers never throw exceptions — they inspect `result.isFailure` and map `result.error` to the appropriate HTTP status:
+
+```typescript
+if (result.isFailure) {
+    return res.status(404).json({ success: false, message: result.error.message });
+}
+return res.status(200).json({ success: true, data: result.value });
+```
+
+Domain errors and their HTTP mappings:
+
+| Error class | HTTP status |
+|-------------|-------------|
+| `NotFoundError` | `404` |
+| `ValidationError` | `400` |
+| Generic `Error` (gateway) | `502` |

@@ -1,0 +1,98 @@
+---
+title: "Get Delivery"
+description: "Returns the delivery record associated with a given transaction."
+---
+
+## `GET /api/deliveries/transaction/:transactionId`
+
+Retrieves the delivery information for a specific transaction.
+
+<Warning>
+  A delivery record is **only created when a transaction reaches `APPROVED` status**. Calling this endpoint for a `PENDING`, `DECLINED`, `ERROR`, or `VOIDED` transaction will return a `404` error.
+</Warning>
+
+## Request
+
+### Path Parameters
+
+<ParamField path="transactionId" type="string (UUID)" required>
+  The UUID of the transaction whose delivery you want to retrieve.
+</ParamField>
+
+```bash
+curl -X GET https://your-api.example.com/api/deliveries/transaction/7f3a1c2d-4e5b-6789-abcd-ef0123456789
+```
+
+## Response
+
+<ResponseField name="success" type="boolean">
+  Always `true` on a successful response.
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  The delivery entity.
+
+  <Expandable title="properties">
+    <ResponseField name="id" type="string (UUID)">
+      Unique identifier of the delivery record.
+    </ResponseField>
+
+    <ResponseField name="transactionId" type="string (UUID)">
+      UUID of the associated transaction.
+    </ResponseField>
+
+    <ResponseField name="customerId" type="string (UUID)">
+      UUID of the customer for whom the delivery was created.
+    </ResponseField>
+
+    <ResponseField name="address" type="string">
+      Street address for delivery.
+    </ResponseField>
+
+    <ResponseField name="city" type="string">
+      City for delivery.
+    </ResponseField>
+
+    <ResponseField name="department" type="string">
+      Department (state/province) for delivery.
+    </ResponseField>
+
+    <ResponseField name="status" type="string (enum)">
+      Current delivery status. One of: `PENDING`, `SHIPPED`, `DELIVERED`.
+    </ResponseField>
+
+    <ResponseField name="createdAt" type="string (ISO 8601)">
+      Timestamp when the delivery record was created.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": "d4e5f6a7-b8c9-0123-defg-456789abcdef",
+    "transactionId": "7f3a1c2d-4e5b-6789-abcd-ef0123456789",
+    "customerId": "a1b2c3d4-e5f6-7890-abcd-ef0123456789",
+    "address": "Calle 123 # 45-67, Apto 201",
+    "city": "Bogotá",
+    "department": "Cundinamarca",
+    "status": "PENDING",
+    "createdAt": "2024-01-15T10:30:06.000Z"
+  }
+}
+```
+
+## Error Responses
+
+| Status | `success` | Description |
+|--------|-----------|-------------|
+| `404`  | `false`   | No delivery record found for this transaction. The transaction may not be approved yet. |
+| `500`  | `false`   | Internal server error. |
+
+```json
+{
+  "success": false,
+  "message": "Entrega no encontrada para esta transacción"
+}
+```

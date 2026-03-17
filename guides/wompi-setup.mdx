@@ -1,0 +1,104 @@
+---
+title: "Wompi Setup"
+description: "How to obtain and configure Wompi sandbox credentials for local development and testing."
+---
+
+The application integrates with **Wompi**, a Colombian payment gateway. You need four keys from Wompi to run the full payment flow. Sandbox credentials are free and do not process real money.
+
+<Warning>
+The `PAYMENT_PRIVATE_KEY` can charge cards and must never be committed to source control, included in client-side code, or logged. Keep it in `backend/.env` only.
+</Warning>
+
+---
+
+## Getting sandbox credentials
+
+<Steps>
+  <Step title="Register at sandbox.wompi.co">
+    Go to [https://sandbox.wompi.co](https://sandbox.wompi.co) and create a free sandbox account. No real bank account or identity verification is required for sandbox access.
+  </Step>
+
+  <Step title="Locate your four API keys">
+    After logging in, navigate to the **Developers** section. You will find four keys:
+
+    | Key | Description | Where to put it |
+    |-----|-------------|-----------------|
+    | Public key | Safe to expose in browser — used for card tokenization | `frontend/.env` as `VITE_PAYMENT_PUBLIC_KEY` and `backend/.env` as `PAYMENT_PUBLIC_KEY` |
+    | Private key | Server-side only — used to initiate charges | `backend/.env` as `PAYMENT_PRIVATE_KEY` |
+    | Events key | Used for webhook signature verification | `backend/.env` as `PAYMENT_EVENTS_KEY` |
+    | Integrity key | Used to compute SHA-256 transaction integrity hashes | `backend/.env` as `PAYMENT_INTEGRITY_KEY` |
+  </Step>
+
+  <Step title="Add keys to your .env files">
+    **`backend/.env`:**
+
+    ```bash
+    PAYMENT_PUBLIC_KEY=pub_stagtest_XXXX
+    PAYMENT_PRIVATE_KEY=prv_stagtest_XXXX
+    PAYMENT_EVENTS_KEY=stagtest_events_XXXX
+    PAYMENT_INTEGRITY_KEY=stagtest_integrity_XXXX
+    PAYMENT_API_URL=https://api-sandbox.co.uat.wompi.dev/v1
+    ```
+
+    **`frontend/.env`:**
+
+    ```bash
+    VITE_PAYMENT_PUBLIC_KEY=pub_stagtest_XXXX
+    VITE_PAYMENT_API_URL=https://api-sandbox.co.uat.wompi.dev/v1
+    ```
+  </Step>
+
+  <Step title="Test with sandbox cards">
+    Wompi provides test card numbers for sandbox testing. Check the Wompi sandbox documentation for current test card numbers, CVVs, and expected outcomes (approved, declined).
+
+    All transactions in sandbox mode are simulated and no real money moves.
+  </Step>
+</Steps>
+
+---
+
+## SHA-256 integrity hash
+
+Every transaction submitted to Wompi is signed with a SHA-256 integrity hash. The `WompiAdapter` in the backend computes this hash before calling the charge API:
+
+```
+hash = SHA256(reference + amount + "COP" + integrityKey)
+```
+
+**Components:**
+
+| Component | Example |
+|-----------|---------|
+| `reference` | `TXN-1718000000000-A3B2C1D` |
+| `amount` | `15500000` (totalInCents as a string) |
+| `"COP"` | The literal string `COP` |
+| `integrityKey` | Value of `PAYMENT_INTEGRITY_KEY` |
+
+The hash is computed server-side using Node.js `crypto.createHash('sha256')` and submitted in the Wompi charge request. Wompi rejects requests where the hash does not match.
+
+<Note>
+The integrity key is different from the private key. The integrity key is used only for hash computation; the private key is used for API authentication.
+</Note>
+
+---
+
+## API URLs
+
+| Environment | URL |
+|-------------|-----|
+| Sandbox | `https://api-sandbox.co.uat.wompi.dev/v1` |
+| Production | `https://production.wompi.dev/v1` |
+
+Both `PAYMENT_API_URL` (backend) and `VITE_PAYMENT_API_URL` (frontend) must point to the same environment. The frontend uses the URL only for card tokenization; the backend uses it for acceptance-token fetching and charge processing.
+
+---
+
+## How keys are used at runtime
+
+| Key | Runtime usage |
+|-----|---------------|
+| Public key | Frontend: `Authorization: Bearer {VITE_PAYMENT_PUBLIC_KEY}` on `POST /tokens/cards` |
+| Public key | Backend: fetching acceptance token from Wompi |
+| Private key | Backend `WompiAdapter`: `Authorization: Bearer {PAYMENT_PRIVATE_KEY}` on charge requests |
+| Integrity key | Backend `WompiAdapter`: SHA-256 hash computation |
+| Events key | Backend: verifying Wompi webhook signatures |

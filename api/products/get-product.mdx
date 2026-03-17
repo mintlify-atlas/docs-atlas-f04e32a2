@@ -1,0 +1,94 @@
+---
+title: "Get Product"
+description: "Returns a single product by its UUID."
+---
+
+## `GET /api/products/:id`
+
+Returns the full details of a single product. Use this endpoint to fetch up-to-date stock and pricing information before initiating a payment.
+
+## Request
+
+### Path Parameters
+
+<ParamField path="id" type="string (UUID)" required>
+  The UUID of the product to retrieve.
+</ParamField>
+
+```bash
+curl -X GET https://your-api.example.com/api/products/550e8400-e29b-41d4-a716-446655440000
+```
+
+## Response
+
+<ResponseField name="success" type="boolean">
+  Always `true` on a successful response.
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  The product object.
+
+  <Expandable title="Product object properties">
+    <ResponseField name="id" type="string (UUID)">
+      Unique identifier for the product.
+    </ResponseField>
+
+    <ResponseField name="name" type="string">
+      Display name of the product.
+    </ResponseField>
+
+    <ResponseField name="description" type="string | null">
+      Product description. May be `null` if not set.
+    </ResponseField>
+
+    <ResponseField name="priceInCents" type="integer">
+      Product price in Colombian peso centavos (COP). For example, `15000000` represents $150.000 COP.
+    </ResponseField>
+
+    <ResponseField name="formattedPrice" type="string">
+      Human-readable price string (e.g. `"$150.000"`). Pre-formatted for display.
+    </ResponseField>
+
+    <ResponseField name="imageUrl" type="string | null">
+      URL of the product image. May be `null` if not set.
+    </ResponseField>
+
+    <ResponseField name="stockUnits" type="integer">
+      Number of units currently available in stock.
+    </ResponseField>
+
+    <ResponseField name="hasStock" type="boolean">
+      `true` if at least one unit is available; `false` if the product is out of stock.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "name": "Audífonos Bluetooth Pro",
+    "description": "Audífonos inalámbricos con cancelación de ruido activa",
+    "priceInCents": 15000000,
+    "formattedPrice": "$150.000",
+    "imageUrl": "https://example.com/audifonos.jpg",
+    "stockUnits": 8,
+    "hasStock": true
+  }
+}
+```
+
+## Error Responses
+
+| Status | `success` | Description |
+|--------|-----------|-------------|
+| `404`  | `false`   | No product exists with the given UUID. |
+| `500`  | `false`   | Internal server error. |
+
+```json
+{
+  "success": false,
+  "message": "Producto con id '550e8400-e29b-41d4-a716-446655440000' no encontrado"
+}
+```

@@ -1,0 +1,109 @@
+---
+title: "Running Tests"
+description: "How to run unit tests, watch mode, coverage reports, and end-to-end tests for the backend and frontend."
+---
+
+<Tabs>
+  <Tab title="Backend">
+    The backend uses **Jest** with `ts-jest` for TypeScript support. Test files match the pattern `**/*.spec.ts` and live alongside the source files they test.
+
+    <CodeGroup>
+
+    ```bash Run all unit tests
+    npm test
+    ```
+
+    ```bash Watch mode
+    npm run test:watch
+    ```
+
+    ```bash With coverage report
+    npm run test:cov
+    ```
+
+    ```bash End-to-end tests
+    npm run test:e2e
+    ```
+
+    </CodeGroup>
+
+    **Run tests for a specific module:**
+
+    Use `npx jest --testPathPattern` with a module name to filter which test files are executed:
+
+    <CodeGroup>
+
+    ```bash Products module
+    npx jest --testPathPattern="products"
+    ```
+
+    ```bash Transactions module
+    npx jest --testPathPattern="transactions"
+    ```
+
+    ```bash Customers module
+    npx jest --testPathPattern="customers"
+    ```
+
+    ```bash Payments module
+    npx jest --testPathPattern="payments"
+    ```
+
+    ```bash Deliveries module
+    npx jest --testPathPattern="deliveries"
+    ```
+
+    </CodeGroup>
+
+    The `--testPathPattern` flag accepts any regex matched against the file path. For example, `npx jest --testPathPattern="use-case"` runs all use-case spec files.
+
+    **Test configuration** (from `backend/package.json`):
+    - `rootDir`: `src`
+    - `testRegex`: `.*\.spec\.ts$`
+    - `transform`: `ts-jest`
+    - `testEnvironment`: `node`
+    - `moduleNameMapper`: `^src/(.*)$` → `<rootDir>/$1`
+    - `coverageDirectory`: `../coverage`
+  </Tab>
+
+  <Tab title="Frontend">
+    The frontend uses **Vitest** (the Vite-native test runner) with `@testing-library/react` for component tests. Test files also match `**/*.spec.ts` (or `.tsx`).
+
+    <CodeGroup>
+
+    ```bash Run all tests once
+    npm test
+    ```
+
+    ```bash Watch mode (re-runs on file change)
+    npm run test:watch
+    ```
+
+    ```bash With coverage report
+    npm run test:coverage
+    ```
+
+    </CodeGroup>
+
+    The `npm test` command maps to `vitest run` (single run, no watch). Coverage is generated with `@vitest/coverage-v8`.
+
+    <Note>
+    The frontend test runner is `vitest`, not `jest`. Do not use `npx jest` in the frontend directory.
+    </Note>
+  </Tab>
+</Tabs>
+
+---
+
+## Command reference
+
+| Command | Directory | What it does |
+|---------|-----------|-------------|
+| `npm test` | `backend/` | Runs all unit tests once with Jest |
+| `npm run test:watch` | `backend/` | Runs Jest in watch mode |
+| `npm run test:cov` | `backend/` | Runs Jest and generates coverage report |
+| `npm run test:e2e` | `backend/` | Runs end-to-end tests with `jest-e2e.json` config |
+| `npx jest --testPathPattern="<module>"` | `backend/` | Runs tests matching the given path pattern |
+| `npm test` | `frontend/` | Runs all tests once with Vitest (`vitest run`) |
+| `npm run test:watch` | `frontend/` | Runs Vitest in watch mode (`vitest`) |
+| `npm run test:coverage` | `frontend/` | Runs Vitest with V8 coverage (`vitest run --coverage`) |

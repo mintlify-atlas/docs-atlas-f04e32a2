@@ -1,0 +1,242 @@
+---
+title: "Frontend"
+description: "React page structure, Redux store slices, checkout flow state, localStorage persistence, routing, services layer, and card validation utilities."
+---
+
+The frontend is a React 19 SPA built with Vite 7. It implements a four-step checkout flow driven by a Redux store, with direct Wompi card tokenization and localStorage persistence across page reloads.
+
+## Directory structure
+
+```
+frontend/src/
+├── pages/
+│   ├── ProductPage/       # Step 1 — product listing and selection
+│   ├── CheckoutPage/      # Steps 2-3 — card/delivery form and payment summary
+│   └── ResultPage/        # Step 4 — transaction result display
+├── components/
+│   ├── CreditCardForm/    # Card number, holder, expiry, CVV + delivery fields
+│   └── PaymentSummary/    # Price breakdown and confirm button
+├── store/
+│   ├── index.ts           # configureStore + localStorage middleware
+│   └── slices/
+│       ├── productSlice.ts      # Async product fetch from backend
+│       ├── checkoutSlice.ts     # Full checkout flow state (steps 1-5)
+│       └── transactionSlice.ts  # Transaction status tracking
+├── services/
+│   ├── api.ts               # Axios instance with VITE_API_URL base URL
+│   ├── payment.service.ts   # Wompi tokenization + backend transaction calls
+│   └── product.service.ts   # Product list fetch
+├── utils/
+│   └── card.utils.ts        # Luhn validation, brand detection, formatting
+└── types/
+    └── index.ts             # Product, CardData, DeliveryData, TransactionResult, ApiResponse
+```
+
+## Routing
+
+Routes are declared in `App.tsx`. Navigation between routes is controlled programmatically by `checkoutSlice.currentStep` — the `AppNavigator` component watches the step value and calls `navigate()` on changes.
+
+| Route | Component | Steps |
+|-------|-----------|-------|
+| `/` | `ProductPage` | Step 1 |
+| `/checkout` | `CheckoutPage` | Steps 2 and 3 |
+| `/result` | `ResultPage` | Step 4 |
+| `*` | Redirect to `/` | — |
+
+```typescript
+useEffect(() => {
+  if (currentStep === 1 || currentStep === 5) {
+    navigate('/');
+  } else if (currentStep === 2 || currentStep === 3) {
+    navigate('/checkout');
+  } else if (currentStep === 4) {
+    navigate('/result');
+  }
+}, [currentStep, navigate]);
+```
+
+Step 5 represents a reset — it triggers navigation back to `/` and clears localStorage.
+
+## Redux store
+
+The store combines three slices. A custom middleware runs after every dispatched action and persists a subset of checkout state to localStorage.
+
+```typescript
+export const store = configureStore({
+  reducer: {
+    products: productReducer,
+    checkout: checkoutReducer,
+    transaction: transactionReducer,
+  },
+  middleware: (getDefaultMiddleware) =>
+    getDefaultMiddleware().concat(localStorageMiddleware),
+});
+```
+
+### productSlice
+
+Manages the product catalog fetched from the backend.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `items` | `Product[]` | All products returned by `GET /api/products` |
+| `loading` | `boolean` | True while the fetch is in flight |
+| `error` | `string \| null` | Error message if the fetch failed |
+
+**Actions:**
+- `fetchProducts` — async thunk that calls `productService.getAll()`
+- `decrementProductStock(productId)` — optimistically reduces local stock after a successful purchase
+
+### checkoutSlice
+
+Centralizes the entire checkout flow. This is the primary slice that drives page navigation.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `currentStep` | `1 \| 2 \| 3 \| 4 \| 5` | Current step in the flow |
+| `selectedProductId` | `string \| null` | UUID of the selected product |
+| `cardData` | `CardData \| null` | Card number, holder, expiry, CVV |
+| `deliveryData` | `DeliveryData \| null` | Full name, email, phone, address, city, department |
+| `cardToken` | `string \| null` | Short-lived token returned by Wompi |
+| `acceptanceToken` | `string \| null` | Wompi acceptance token from backend |
+| `transactionId` | `string \| null` | UUID of the transaction in the backend |
+| `transactionResult` | `TransactionResult \| null` | Final payment result with status and amounts |
+| `isProcessing` | `boolean` | True while the payment is being submitted |
+| `error` | `string \| null` | Last error message |
+
+**Actions:**
+
+| Action | Effect |
+|--------|--------|
+| `selectProduct(productId)` | Sets `selectedProductId`, advances to step 2 |
+| `setCardData(cardData)` | Stores card fields (not persisted to localStorage) |
+| `setCardToken(token)` | Stores the Wompi card token |
+| `setDeliveryData(data)` | Stores name, email, phone, address |
+| `setAcceptanceToken(token)` | Stores the Wompi acceptance token |
+| `goToSummary()` | Advances to step 3 |
+| `startProcessing()` | Sets `isProcessing = true`, clears error |
+| `paymentSuccess(result)` | Sets result, advances to step 4 |
+| `paymentFailed(message)` | Sets error and a `DECLINED` result, advances to step 4 |
+| `resetCheckout()` | Clears all state and removes localStorage entries |
+| `setStep(step)` | Directly sets `currentStep` |
+
+### transactionSlice
+
+Tracks the raw transaction status used during polling.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | `string \| null` | Backend transaction UUID |
+| `reference` | `string \| null` | Transaction reference (format: `TXN-{ts}-{rand}`) |
+| `status` | `TransactionStatus \| null` | `PENDING` `APPROVED` `DECLINED` `ERROR` `VOIDED` |
+| `totalInCents` | `number \| null` | Total amount in centavos |
+| `loading` | `boolean` | True while polling |
+| `error` | `string \| null` | Polling error |
+
+**Actions:** `setTransaction`, `setLoading`, `setError`, `resetTransaction`
+
+## localStorage persistence
+
+The custom `localStorageMiddleware` in `store/index.ts` serializes a subset of checkout state to `localStorage` after every action. This keeps the flow resumable across page reloads.
+
+**Storage key:** `checkout_progress`
+
+**Persisted fields:**
+
+| Field | Notes |
+|-------|-------|
+| `currentStep` | Step 3 is normalized back to 2 on rehydration (summary is not restored mid-flow) |
+| `selectedProductId` | Dropped if not present — prevents orphaned state |
+| `deliveryData` | Address and customer details |
+| `transactionId` | Used to resume polling if the page is reloaded mid-poll |
+| `transactionResult` | Allows the result page to render after a reload |
+
+**Not persisted:** `cardData`, `cardToken`, `acceptanceToken`, `isProcessing`, `error` — sensitive or transient fields that should not survive a reload.
+
+`resetCheckout()` removes both `checkout_progress` and `checkout_form_draft` keys from localStorage.
+
+## Services layer
+
+### api.ts
+
+Exports an Axios instance configured with `VITE_API_URL` as the base URL:
+
+```typescript
+// Effectively: axios.create({ baseURL: 'http://localhost:3001/api' })
+import api from './services/api';
+```
+
+### payment.service.ts
+
+Handles the two external calls in the tokenization flow:
+
+1. `getAcceptanceToken()` — `GET /api/payments/acceptance-token` via the backend proxy.
+2. `tokenizeCard(cardData)` — `POST {VITE_PAYMENT_API_URL}/tokens/cards` directly to Wompi with `Authorization: Bearer {VITE_PAYMENT_PUBLIC_KEY}`.
+3. `processTransaction(payload)` — `POST /api/transactions` with the card token, acceptance token, product ID, customer data, delivery data, and last four digits.
+4. `getTransactionStatus(transactionId)` — `GET /api/transactions/:id/status` — called in a polling loop with a 2.5 s interval and a maximum of 12 attempts.
+
+### product.service.ts
+
+Provides `getAll()` — calls `GET /api/products` and returns a typed `Product[]`.
+
+## Card validation utilities
+
+Defined in `src/utils/card.utils.ts`:
+
+**Luhn algorithm check**
+
+Validates that a card number passes the Luhn checksum before the form is submitted, preventing an unnecessary tokenization call to Wompi for obviously invalid numbers.
+
+**Brand detection (real-time)**
+
+| Brand | Detection rule |
+|-------|----------------|
+| Visa | Starts with `4` |
+| Mastercard | Starts with `51`–`55`, or `2221`–`2720` |
+
+Detection runs on every keystroke so the card brand icon updates as the user types.
+
+**Formatting**
+
+Card numbers are formatted with spaces every four digits (`4242 4242 4242 4242`) for display. Expiry is formatted as `MM/YY`.
+
+## Form validation rules
+
+All form validation is handled by React Hook Form 7:
+
+| Field | Rules |
+|-------|-------|
+| Card number | Required · 16 digits · Luhn valid |
+| Cardholder name | Required · minimum 3 characters |
+| Expiry (MM/YY) | Required · matches `^\d{2}/\d{2}$` · month 1–12 · year ≥ 2024 |
+| CVV | Required · 3–4 digits |
+| Full name | Required · minimum 3 characters |
+| Email | Required · valid email format |
+| Phone | Optional · 7–10 digits if provided |
+| Address | Required · minimum 5 characters |
+| City / Department | Required |
+
+## Wompi tokenization flow
+
+```
+1. GET  /api/payments/acceptance-token
+        → backend proxies Wompi → returns acceptanceToken
+
+2. POST {VITE_PAYMENT_API_URL}/tokens/cards   (direct to Wompi)
+        body: { number, holder, expiry_month, expiry_year, cvc }
+        Authorization: Bearer {VITE_PAYMENT_PUBLIC_KEY}
+        → returns cardToken
+
+3. POST /api/transactions
+        body: { cardToken, acceptanceToken, productId,
+                customerData, deliveryData, cardLastFour }
+        → backend processes payment with private key
+
+4. GET  /api/transactions/:id/status   (polling)
+        → max 12 attempts, 2.5 s interval
+        → resolves when status ≠ PENDING
+```
+
+<Warning>
+  Card data (`number`, `cvc`) must not be stored in Redux state or localStorage. `checkoutSlice` holds `cardData` only for the duration of the browser session and it is explicitly excluded from the localStorage persistence middleware.
+</Warning>

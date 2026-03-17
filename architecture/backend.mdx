@@ -1,0 +1,289 @@
+---
+title: "Backend"
+description: "Clean Architecture layers, the five feature modules, the Result pattern, domain errors, injection tokens, and the full database schema."
+---
+
+The backend is a NestJS 11 REST API that processes payments via Wompi. It applies Clean Architecture with five feature modules, each divided into domain, application, and infrastructure layers.
+
+## Directory structure
+
+```
+backend/src/
+├── app.module.ts           # Root module — wires TypeORM and all feature modules
+├── main.ts                 # Bootstrap: Helmet, CORS, ValidationPipe, Swagger, seed
+├── database/
+│   └── seeds/
+│       └── product.seed.ts # Inserts 3 products on first start
+├── modules/
+│   ├── products/
+│   │   ├── domain/
+│   │   │   ├── entities/   # Pure domain object (no ORM decorators)
+│   │   │   └── ports/      # Repository interface
+│   │   ├── application/
+│   │   │   └── use-cases/  # GetProductsUseCase, GetProductByIdUseCase
+│   │   └── infrastructure/
+│   │       ├── adapters/   # ProductEntity (TypeORM), ProductTypeOrmRepository
+│   │       ├── dto/        # ProductResponseDto
+│   │       └── product.controller.ts
+│   ├── customers/          # Same structure — CreateCustomerUseCase
+│   ├── payments/           # GetAcceptanceTokenUseCase, WompiAdapter
+│   ├── transactions/       # ProcessPaymentUseCase, GetTransactionStatusUseCase
+│   └── deliveries/         # Delivery entity and repository
+└── shared/
+    ├── result.ts            # Result<T, E> class
+    └── errors/
+        └── domain-errors.ts # NotFoundError, ValidationError
+```
+
+## Clean Architecture layers
+
+Dependencies flow in one direction only:
+
+```
+infrastructure → application → domain
+```
+
+| Layer | Contents | Framework dependencies |
+|-------|----------|------------------------|
+| `domain/` | Pure TypeScript entities and port interfaces | None |
+| `application/` | Use cases that implement business logic; return `Result<T, E>` | None |
+| `infrastructure/` | TypeORM entities, repository implementations, DTOs, controllers | NestJS, TypeORM, class-validator |
+
+Domain objects carry no ORM decorators. TypeORM entities in the `adapters/` folder are infrastructure concerns that get mapped to and from domain objects by the repository implementations.
+
+## The five modules
+
+| Module | Use cases | Description |
+|--------|-----------|-------------|
+| `products` | `GetProductsUseCase`, `GetProductByIdUseCase` | Lists all products; fetches a single product by UUID |
+| `customers` | `CreateCustomerUseCase` | Creates a new customer or returns the existing one by email |
+| `payments` | `GetAcceptanceTokenUseCase` | Proxies Wompi's acceptance token endpoint |
+| `transactions` | `ProcessPaymentUseCase`, `GetTransactionStatusUseCase` | Orchestrates the full payment flow; polls Wompi for status |
+| `deliveries` | _(repository only)_ | Stores delivery records for approved transactions |
+
+## Result\<T, E\> pattern
+
+Defined in `src/shared/result.ts`, the `Result` class replaces thrown exceptions in the application and domain layers:
+
+```typescript
+export class Result<T, E = Error> {
+  public readonly isSuccess: boolean;
+
+  get isFailure(): boolean {
+    return !this.isSuccess;
+  }
+
+  get value(): T {
+    if (!this.isSuccess) {
+      throw new Error('Cannot access value of a failed Result. Check isSuccess first.');
+    }
+    return this._value as T;
+  }
+
+  get error(): E {
+    if (this.isSuccess) {
+      throw new Error('Cannot access error of a successful Result. Check isFailure first.');
+    }
+    return this._error as E;
+  }
+
+  static ok<T>(value: T): Result<T> {
+    return new Result<T>(true, value);
+  }
+
+  static fail<E>(error: E): Result<any, E> {
+    return new Result<any, E>(false, undefined, error);
+  }
+
+  map<U>(fn: (value: T) => U): Result<U, E> { ... }
+  async mapAsync<U>(fn: (value: T) => Promise<U>): Promise<Result<U, E>> { ... }
+}
+```
+
+Use cases return either `Result.ok(data)` on success or `Result.fail(new NotFoundError(...))` on failure. The `.map()` and `.mapAsync()` methods allow chaining transformations without unwrapping.
+
+## Domain error types
+
+Defined in `src/shared/errors/domain-errors.ts`:
+
+```typescript
+export class NotFoundError extends Error {
+  readonly statusCode = 404;
+
+  constructor(entity: string, id?: string) {
+    super(id ? `${entity} con id '${id}' no encontrado` : `${entity} no encontrado`);
+    this.name = 'NotFoundError';
+  }
+}
+
+export class ValidationError extends Error {
+  readonly statusCode = 400;
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'ValidationError';
+  }
+}
+```
+
+| Error class | HTTP status | Use case |
+|-------------|-------------|----------|
+| `NotFoundError` | 404 | Entity not found by ID |
+| `ValidationError` | 400 | Business rule violation (e.g., out of stock) |
+
+## Injection tokens convention
+
+Ports are bound to string tokens so use cases remain free of infrastructure imports:
+
+```typescript
+// In the module (products.module.ts):
+{
+  provide: 'PRODUCT_REPOSITORY',
+  useClass: ProductTypeOrmRepository,
+}
+
+// In the use case constructor:
+constructor(
+  @Inject('PRODUCT_REPOSITORY')
+  private repo: ProductRepositoryPort
+) {}
+```
+
+Token naming convention:
+
+| Token | Bound to |
+|-------|----------|
+| `'PRODUCT_REPOSITORY'` | `ProductTypeOrmRepository` |
+| `'CUSTOMER_REPOSITORY'` | `CustomerTypeOrmRepository` |
+| `'TRANSACTION_REPOSITORY'` | `TransactionTypeOrmRepository` |
+| `'DELIVERY_REPOSITORY'` | `DeliveryTypeOrmRepository` |
+| `'PAYMENT_GATEWAY'` | `WompiAdapter` |
+
+## Controller response pattern
+
+Controllers never throw exceptions. They inspect the `Result` and write the HTTP response directly:
+
+```typescript
+async findOne(@Param('id', ParseUUIDPipe) id: string, @Res() res: Response) {
+  const result = await this.getProductByIdUseCase.execute(id);
+
+  if (result.isFailure) {
+    const error = result.error;
+
+    if (error instanceof NotFoundError) {
+      return res.status(HttpStatus.NOT_FOUND)
+        .json({ success: false, message: error.message });
+    }
+    if (error instanceof ValidationError) {
+      return res.status(HttpStatus.BAD_REQUEST)
+        .json({ success: false, message: error.message });
+    }
+
+    return res.status(HttpStatus.INTERNAL_SERVER_ERROR)
+      .json({ success: false, message: error.message });
+  }
+
+  return res.status(HttpStatus.OK)
+    .json({ success: true, data: toProductResponseDto(result.value) });
+}
+```
+
+### HTTP status codes
+
+| Code | Meaning |
+|------|---------|
+| `200` | Success with data |
+| `201` | Resource created |
+| `400` | Validation error (business rule violated) |
+| `402` | Payment declined by Wompi |
+| `404` | Entity not found |
+| `500` | Unexpected internal error |
+| `502` | Wompi is unreachable or returned an unexpected error |
+
+## ProcessPaymentUseCase flow
+
+`POST /api/transactions` triggers `ProcessPaymentUseCase`, which executes these steps in order:
+
+1. Verify the product exists and has stock.
+2. Find or create the customer by email.
+3. Calculate the total: `product_price + BASE_FEE_IN_CENTS + DELIVERY_FEE_IN_CENTS`.
+4. Create a `PENDING` transaction with reference `TXN-{timestamp}-{random}`.
+5. Call `WompiAdapter` with integrity hash `SHA256(reference + amount + "COP" + integrityKey)`.
+6. Update the transaction status from the Wompi response.
+7. If `APPROVED`: create a delivery record and decrement stock using `GREATEST()` to avoid race conditions.
+8. Return the transaction detail or the appropriate domain error.
+
+## Database entities
+
+### `products`
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | UUID | Primary key, auto-generated |
+| `name` | varchar(255) | |
+| `description` | text | Nullable |
+| `price_in_cents` | integer | Price in COP cents |
+| `image_url` | varchar(500) | Nullable |
+| `stock` | integer | Default 0 |
+| `created_at` / `updated_at` | timestamp | Auto-managed |
+
+### `customers`
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | UUID | Primary key |
+| `full_name` | varchar(255) | |
+| `email` | varchar(255) | Unique constraint |
+| `phone` | varchar(50) | Nullable |
+| `created_at` | timestamp | Auto-managed |
+
+### `transactions`
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | UUID | Primary key |
+| `reference` | varchar(100) | Unique, format `TXN-{ts}-{rand}` |
+| `customer_id` | UUID | FK → customers |
+| `product_id` | UUID | FK → products |
+| `product_amount_in_cents` | integer | |
+| `base_fee_in_cents` | integer | |
+| `delivery_fee_in_cents` | integer | |
+| `total_in_cents` | integer | |
+| `status` | enum | `PENDING` `APPROVED` `DECLINED` `ERROR` `VOIDED` |
+| `gateway_transaction_id` | varchar(255) | Nullable — Wompi's transaction ID |
+| `card_last_four` | varchar(4) | Nullable |
+| `delivery_address` | varchar(500) | |
+| `delivery_city` | varchar(255) | |
+| `delivery_department` | varchar(255) | |
+| `created_at` / `updated_at` | timestamp | Auto-managed |
+
+### `deliveries`
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | UUID | Primary key |
+| `transaction_id` | UUID | FK → transactions |
+| `customer_id` | UUID | FK → customers |
+| `address` | varchar(500) | |
+| `city` | varchar(255) | |
+| `department` | varchar(255) | |
+| `status` | enum | `PENDING` `SHIPPED` `DELIVERED` |
+| `created_at` | timestamp | Auto-managed |
+
+<Note>
+  All monetary values are stored and transmitted in **centavos (COP)**. Any column carrying a monetary value uses the `_in_cents` suffix. Divide by 100 to display amounts in pesos.
+</Note>
+
+## API endpoints
+
+| Method | Route | Description |
+|--------|-------|-------------|
+| `GET` | `/api/products` | List all products |
+| `GET` | `/api/products/:id` | Get a product by UUID |
+| `GET` | `/api/payments/acceptance-token` | Get Wompi acceptance token |
+| `POST` | `/api/transactions` | Process a full payment |
+| `GET` | `/api/transactions/:id` | Get transaction by UUID |
+| `GET` | `/api/transactions/:id/status` | Poll transaction status |
+| `GET` | `/api/deliveries/transaction/:transactionId` | Get delivery for a transaction |
+
+Full request/response schemas are available in the Swagger UI at `http://localhost:3001/api/docs`.

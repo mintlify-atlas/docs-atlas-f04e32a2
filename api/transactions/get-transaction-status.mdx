@@ -1,0 +1,87 @@
+---
+title: "Get Transaction Status"
+description: "Returns the current status of a transaction, querying Wompi live for any transaction still in PENDING state."
+---
+
+## `GET /api/transactions/:id/status`
+
+Returns the current status of a transaction. For transactions that have already reached a terminal state (`APPROVED`, `DECLINED`, `ERROR`, `VOIDED`), the stored status is returned immediately. For `PENDING` transactions with a Wompi gateway ID, the status is fetched live from Wompi and the local record is updated if the transaction has settled.
+
+<Info>
+  The frontend polls this endpoint to track payment completion. The default polling strategy uses **12 attempts with a 2.5-second interval** (30 seconds total). Once a terminal status is received the polling loop stops.
+</Info>
+
+### Status lifecycle
+
+| Status | When it appears |
+|--------|-----------------|
+| `PENDING` | Transaction created but Wompi hasn't settled it yet, or Wompi was unreachable during the status check. |
+| `APPROVED` | Wompi confirmed the charge was successful. Stock is decremented and a delivery record is created. |
+| `DECLINED` | Wompi declined the payment (insufficient funds, blocked card, etc.). |
+| `ERROR` | An unexpected error occurred during processing. |
+| `VOIDED` | The transaction was reversed after approval. |
+
+<Note>
+  If Wompi returns an error while fetching the live status, this endpoint still returns `200 OK` with `status: "PENDING"` rather than surfacing the upstream error. This keeps the polling loop alive without alarming the user prematurely.
+</Note>
+
+## Request
+
+### Path Parameters
+
+<ParamField path="id" type="string (UUID)" required>
+  The UUID of the transaction to check.
+</ParamField>
+
+```bash
+curl -X GET https://your-api.example.com/api/transactions/7f3a1c2d-4e5b-6789-abcd-ef0123456789/status
+```
+
+## Response
+
+<ResponseField name="success" type="boolean">
+  Always `true` on a successful response (including when falling back to `PENDING` due to a Wompi error).
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  Status data for the transaction.
+
+  <Expandable title="properties">
+    <ResponseField name="transactionId" type="string (UUID)">
+      UUID of the transaction.
+    </ResponseField>
+
+    <ResponseField name="status" type="string (enum)">
+      Current status: `PENDING`, `APPROVED`, `DECLINED`, `ERROR`, or `VOIDED`.
+    </ResponseField>
+
+    <ResponseField name="gatewayTransactionId" type="string | null">
+      Wompi's transaction ID. Only present when the transaction has reached a terminal state (`APPROVED`, `DECLINED`, `ERROR`, `VOIDED`).
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+```json
+{
+  "success": true,
+  "data": {
+    "transactionId": "7f3a1c2d-4e5b-6789-abcd-ef0123456789",
+    "status": "APPROVED",
+    "gatewayTransactionId": "wompi-txn-abc123"
+  }
+}
+```
+
+## Error Responses
+
+| Status | `success` | Description |
+|--------|-----------|-------------|
+| `404`  | `false`   | No transaction exists with the given UUID. |
+| `500`  | `false`   | Internal server error. |
+
+```json
+{
+  "success": false,
+  "message": "Transacción no encontrada"
+}
+```

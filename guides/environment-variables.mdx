@@ -1,0 +1,110 @@
+---
+title: "Environment Variables"
+description: "Complete reference for all backend and frontend environment variables required to run the application."
+---
+
+<Warning>
+Never commit `.env` files to version control. Add `.env` to your `.gitignore`. The keys `PAYMENT_PRIVATE_KEY`, `PAYMENT_EVENTS_KEY`, and `PAYMENT_INTEGRITY_KEY` grant access to your Wompi account — treat them as secrets.
+</Warning>
+
+<Tabs>
+  <Tab title="Backend">
+    The backend reads all variables at startup via NestJS `ConfigService`. Required variables with no default must be set or the application will fail to start or connect.
+
+    **Database**
+
+    | Variable | Description | Default |
+    |----------|-------------|---------|
+    | `DB_HOST` | PostgreSQL server hostname | `localhost` |
+    | `DB_PORT` | PostgreSQL port | `5432` |
+    | `DB_USER` | Database user | — (required) |
+    | `DB_PASS` | Database password | — (required) |
+    | `DB_NAME` | Database name | `checkout_db` |
+
+    **Wompi payment gateway**
+
+    | Variable | Description | Default |
+    |----------|-------------|---------|
+    | `PAYMENT_PUBLIC_KEY` | Wompi public key (used for server-side requests) | — (required) |
+    | `PAYMENT_PRIVATE_KEY` | Wompi private key (charges cards) | — (required) |
+    | `PAYMENT_EVENTS_KEY` | Wompi events key (webhook signature verification) | — (required) |
+    | `PAYMENT_INTEGRITY_KEY` | Wompi integrity key (SHA-256 hash signing) | — (required) |
+    | `PAYMENT_API_URL` | Wompi API base URL | `https://api-sandbox.co.uat.wompi.dev/v1` |
+
+    **Server**
+
+    | Variable | Description | Default |
+    |----------|-------------|---------|
+    | `PORT` | HTTP server port | `3001` |
+    | `FRONTEND_URL` | Allowed CORS origin | `http://localhost:5173` |
+
+    **Fees (in centavos COP)**
+
+    | Variable | Description | Default |
+    |----------|-------------|---------|
+    | `BASE_FEE_IN_CENTS` | Base service fee added to every transaction | `300000` ($3.000 COP) |
+    | `DELIVERY_FEE_IN_CENTS` | Delivery/shipping fee added to every transaction | `200000` ($2.000 COP) |
+
+    **Example `backend/.env`:**
+
+    ```bash
+    DB_HOST=localhost
+    DB_PORT=5432
+    DB_USER=
+    DB_PASS=
+    DB_NAME=checkout_db
+
+    PAYMENT_PUBLIC_KEY=
+    PAYMENT_PRIVATE_KEY=
+    PAYMENT_EVENTS_KEY=
+    PAYMENT_INTEGRITY_KEY=
+    PAYMENT_API_URL=https://api-sandbox.co.uat.wompi.dev/v1
+
+    PORT=3001
+    FRONTEND_URL=http://localhost:5173
+
+    BASE_FEE_IN_CENTS=300000
+    DELIVERY_FEE_IN_CENTS=200000
+    ```
+  </Tab>
+
+  <Tab title="Frontend">
+    The frontend uses Vite's `import.meta.env` system. Only variables prefixed with `VITE_` are exposed to the browser bundle.
+
+    | Variable | Description | Default |
+    |----------|-------------|---------|
+    | `VITE_API_URL` | Backend API base URL | `http://localhost:3001/api` |
+    | `VITE_PAYMENT_API_URL` | Wompi API base URL (used for direct browser tokenization) | `https://api-sandbox.co.uat.wompi.dev/v1` |
+    | `VITE_PAYMENT_PUBLIC_KEY` | Wompi public key (safe to expose in the browser — tokenizes cards only) | — (required) |
+
+    <Note>
+    `VITE_PAYMENT_PUBLIC_KEY` is the **public** key and is intentionally included in the client bundle. It can only be used to tokenize card data with Wompi and cannot initiate charges. The private key is kept in the backend `.env` exclusively.
+    </Note>
+
+    **Example `frontend/.env`:**
+
+    ```bash
+    VITE_API_URL=http://localhost:3001/api
+    VITE_PAYMENT_API_URL=https://api-sandbox.co.uat.wompi.dev/v1
+    VITE_PAYMENT_PUBLIC_KEY=
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## Quick setup
+
+```bash
+# Backend
+cd backend
+cp .env.example .env
+# Fill in DB_USER, DB_PASS, and all PAYMENT_* variables
+
+# Frontend
+cd frontend
+cp .env.example .env
+# Fill in VITE_PAYMENT_PUBLIC_KEY
+```
+
+After filling in values, start the backend with `npm run start:dev` and the frontend with `npm run dev`.

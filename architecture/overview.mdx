@@ -1,0 +1,106 @@
+---
+title: "Architecture overview"
+description: "High-level view of the two-tier checkout system, Wompi integration, database layer, and key design decisions."
+---
+
+The application is split into two independently deployable tiers: a **NestJS REST API** and a **React SPA**. A third external actor — the **Wompi payment gateway** — is called from both tiers for different purposes.
+
+## System diagram
+
+```
+┌─────────────────────────────────────────────────────┐
+│                    Browser (React SPA)               │
+│                                                      │
+│  ProductPage → CheckoutPage → ResultPage             │
+│       │              │                               │
+│       │     ┌────────┴──────────┐                    │
+│       │     │  Wompi Tokenize   │  POST /tokens/cards │
+│       │     │  (public key)     │ ──────────────────► Wompi
+│       │     └────────┬──────────┘                    │
+│       │              │ cardToken                     │
+└───────┼──────────────┼───────────────────────────────┘
+        │ REST          │
+        ▼              ▼
+┌──────────────────────────────┐
+│     NestJS API (port 3001)   │
+│                              │
+│  products / customers /      │
+│  transactions / payments /   │
+│  deliveries                  │
+│              │               │
+│              │ PAYMENT_PRIVATE_KEY
+│              ▼               │
+│        Wompi API ────────────┘
+│              │
+│              ▼
+│        PostgreSQL (TypeORM)
+└──────────────────────────────┘
+```
+
+## Two-tier architecture
+
+| Tier | Technology | Responsibility |
+|------|------------|----------------|
+| Frontend SPA | React 19, Vite 7, Redux Toolkit 2 | UI, form validation, card tokenization, polling |
+| Backend API | NestJS 11, TypeScript, TypeORM | Business logic, payment orchestration, persistence |
+
+The two tiers communicate exclusively over HTTP. The backend exposes a REST API under the `/api` prefix. The frontend is a static build that can be served from any CDN or web server.
+
+## How Wompi fits in
+
+Wompi is used in two distinct ways:
+
+**Client-side tokenization (browser → Wompi direct)**
+
+The browser calls `POST {VITE_PAYMENT_API_URL}/tokens/cards` with the raw card fields and the merchant's public key. Wompi returns a short-lived `cardToken`. This call never passes through the backend, so raw card data never touches your infrastructure.
+
+**Server-side transaction processing (NestJS → Wompi)**
+
+The backend receives the `cardToken` and constructs a transaction request to Wompi using the private key. An integrity hash is computed as:
+
+```
+SHA256(reference + amount + "COP" + PAYMENT_INTEGRITY_KEY)
+```
+
+This hash prevents any client-side tampering with the transaction amount or reference.
+
+## Checkout flow sequence
+
+| Step | Actor | Action |
+|------|-------|--------|
+| 1 | Browser | `GET /api/products` — load catalog |
+| 2 | Browser | User selects product and fills card + delivery form |
+| 3 | Browser | `GET /api/payments/acceptance-token` — backend proxies Wompi |
+| 4 | Browser → Wompi | `POST /tokens/cards` with public key — receive `cardToken` |
+| 5 | Browser → Backend | `POST /api/transactions` with `cardToken`, `acceptanceToken`, customer + delivery data |
+| 6 | Backend → Wompi | Create transaction with private key + integrity hash |
+| 7 | Backend | Save transaction, create delivery record, decrement stock |
+| 8 | Browser | Poll `GET /api/transactions/:id/status` every 2.5 s (max 12 attempts) |
+| 9 | Browser | Navigate to result page when status ≠ `PENDING` |
+
+## Database layer
+
+PostgreSQL 14 is accessed via TypeORM with `synchronize: true` — the schema is automatically kept in sync with entity definitions. There are no migration files.
+
+Four tables form the core schema:
+
+| Table | Purpose |
+|-------|----------|
+| `products` | Catalog with stock counters |
+| `customers` | Deduplicated by email — created once, reused on repeat purchases |
+| `transactions` | Full audit trail: amounts, status, gateway ID, card last four |
+| `deliveries` | Created only for `APPROVED` transactions |
+
+All monetary values are stored in **centavos (COP)** and follow the `_in_cents` naming convention.
+
+## Key design decisions
+
+**Card data never reaches the backend.** The tokenization step happens entirely in the browser. The backend only ever sees a `cardToken` and the card's last four digits — both safe to store.
+
+**Result\<T, E\> pattern instead of exceptions.** Every use case returns `Result.ok(value)` or `Result.fail(error)`. Controllers inspect `result.isFailure` and map domain errors to HTTP status codes explicitly. No `try/catch` in controllers, no uncaught exceptions leaking stack traces.
+
+**Clean Architecture with strict layer dependencies.** The dependency direction is always `infrastructure → application → domain`. Domain entities and port interfaces have zero framework dependencies — they contain only plain TypeScript classes and interfaces.
+
+**Injection tokens as strings.** Ports are provided and injected using string tokens (e.g., `'PRODUCT_REPOSITORY'`, `'PAYMENT_GATEWAY'`) rather than class references. This keeps use cases decoupled from concrete implementations.
+
+**Race-condition-safe stock decrement.** When a transaction is approved, stock is decremented using PostgreSQL's `GREATEST()` function to prevent the value from going negative under concurrent approvals.

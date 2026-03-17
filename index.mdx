@@ -1,97 +1,83 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "Mi Tienda — Payment Checkout App"
+description: "A full-stack checkout application integrated with the Wompi payment gateway. Let your customers select products, pay securely with a credit card, and track their delivery in real time."
 ---
 
-## Setting up
-
-Get your documentation site up and running in minutes.
-
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get the app running locally in minutes with backend and frontend setup
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Checkout Flow" icon="cart-shopping" href="/guides/checkout-flow">
+    Understand the 4-step checkout: product selection, payment form, summary, and result
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="API Reference" icon="code" href="/api/products/list-products">
+    Full REST API documentation for products, transactions, and deliveries
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="Architecture" icon="sitemap" href="/architecture/overview">
+    Clean Architecture backend and React SPA frontend deep-dives
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## What is Mi Tienda?
 
-Everything you need to create world-class documentation.
+Mi Tienda is a full-stack payment checkout application that demonstrates a production-ready integration with the **Wompi** payment gateway. Users can browse products, enter their card and delivery details, and receive real-time payment results — all secured through Wompi's client-side tokenization so raw card data never touches your server.
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+<Info>
+  Card data is tokenized directly in the browser via Wompi's API. Your backend only ever receives a card token — never raw card numbers.
+</Info>
 
-## Need inspiration?
+## Key features
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+<CardGroup cols={2}>
+  <Card title="Secure tokenization" icon="shield-check">
+    Credit card data is tokenized client-side via Wompi. The card number never reaches your backend.
+  </Card>
+  <Card title="Real-time status polling" icon="rotate">
+    After payment submission, the frontend polls the transaction status every 2.5 seconds (up to 12 attempts) until a final result is returned.
+  </Card>
+  <Card title="Clean Architecture backend" icon="layer-group">
+    NestJS backend with strict domain/application/infrastructure separation, Result pattern, and 125 unit tests at ~99% coverage.
+  </Card>
+  <Card title="Persistent checkout state" icon="floppy-disk">
+    Redux Toolkit tracks the full checkout flow across page reloads using localStorage persistence.
+  </Card>
+  <Card title="Auto-seeded products" icon="box">
+    Three demo products are automatically inserted into the database on first startup — no manual setup needed.
+  </Card>
+  <Card title="Swagger API docs" icon="file-code">
+    Interactive API documentation available at `/api/docs` when the backend is running.
+  </Card>
+</CardGroup>
+
+## Tech stack
+
+| Layer | Technology |
+|-------|------------|
+| Backend | NestJS 11, TypeScript, TypeORM, PostgreSQL 14 |
+| Frontend | React 19, Vite 7, Redux Toolkit 2, React Router 7, React Hook Form 7 |
+| Payments | Wompi (client-side tokenization + server-side processing) |
+| Validation | class-validator (backend), React Hook Form + Luhn algorithm (frontend) |
+| Testing | Jest (backend, 125 tests), Vitest (frontend) |
+| Documentation | Swagger/OpenAPI at `/api/docs` |
+
+## Checkout flow overview
+
+```
+[1] Product selection
+        ↓
+[2] Card + delivery form
+        ↓
+[3] Order summary & confirmation
+        ↓
+[4] Tokenization (Frontend → Wompi)
+        ↓
+[5] Payment processing (Frontend → Backend → Wompi)
+        ↓
+[6] Status polling (until resolved)
+        ↓
+[7] Result (APPROVED / DECLINED / ERROR)
+```
+
+<Tip>
+  Ready to get started? Follow the [Quickstart guide](/quickstart) to have the full stack running locally in under 5 minutes.
+</Tip>

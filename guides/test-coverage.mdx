@@ -1,0 +1,106 @@
+---
+title: "Test Coverage"
+description: "Backend test coverage metrics, Jest configuration, and what is excluded from coverage collection."
+---
+
+The backend has **125 unit tests** distributed across **20 suites**, covering approximately 99% of all business logic.
+
+## Coverage metrics
+
+| Metric | Coverage |
+|--------|----------|
+| Statements | 98.86% |
+| Branches | 98.80% |
+| Functions | 92.53% |
+| Lines | 98.74% |
+
+These metrics are computed over all included source files after applying the exclusion patterns listed below.
+
+---
+
+## Generating the coverage report
+
+```bash
+cd backend
+npm run test:cov
+```
+
+Jest runs all unit tests and writes coverage output to the `backend/coverage/` directory.
+
+<Info>
+The full HTML coverage report is generated at `backend/coverage/lcov-report/index.html`. Open it in a browser for a file-by-file breakdown with line-level highlighting.
+</Info>
+
+---
+
+## Jest configuration
+
+The Jest configuration lives inside `backend/package.json` under the `"jest"` key:
+
+```json
+{
+  "jest": {
+    "moduleFileExtensions": ["js", "json", "ts"],
+    "rootDir": "src",
+    "testRegex": ".*\\.spec\\.ts$",
+    "transform": {
+      "^.+\\.(t|j)s$": "ts-jest"
+    },
+    "collectCoverageFrom": [
+      "**/*.(t|j)s"
+    ],
+    "coveragePathIgnorePatterns": [
+      "main\\.ts",
+      "app\\.module\\.ts",
+      ".*\\.module\\.ts",
+      ".*\\.dto\\.ts"
+    ],
+    "coverageDirectory": "../coverage",
+    "testEnvironment": "node",
+    "moduleNameMapper": {
+      "^src/(.*)$": "<rootDir>/$1"
+    }
+  }
+}
+```
+
+---
+
+## Excluded from coverage
+
+The following file patterns are excluded from coverage collection via `coveragePathIgnorePatterns`:
+
+| Pattern | Reason |
+|---------|--------|
+| `main.ts` | Application bootstrap entry point — no testable logic |
+| `app.module.ts` | Root NestJS module — wiring only |
+| `*.module.ts` | Feature module files — declare providers, no logic |
+| `*.dto.ts` | Data Transfer Objects — class-validator decorators, no logic |
+
+All use cases, repositories, adapters, controllers, domain entities, and utilities are included in coverage.
+
+---
+
+## Test distribution
+
+Tests are co-located with their source files using the `.spec.ts` suffix. Examples:
+
+| Test file | What it tests |
+|-----------|---------------|
+| `process-payment.use-case.spec.ts` | `ProcessPaymentUseCase` — all 8 steps, error branches |
+| `product.seed.spec.ts` | Seed function — runs on empty table, skips on non-empty |
+| `get-products.use-case.spec.ts` | `GetProductsUseCase` |
+| `get-product-by-id.use-case.spec.ts` | `GetProductByIdUseCase` |
+| `create-customer.use-case.spec.ts` | `CreateCustomerUseCase` |
+
+To run all tests and view a summary in the terminal:
+
+```bash
+cd backend && npm test
+```
+
+To view detailed per-file coverage in the terminal:
+
+```bash
+cd backend && npm run test:cov
+```

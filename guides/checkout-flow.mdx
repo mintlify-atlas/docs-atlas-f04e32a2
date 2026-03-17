@@ -1,0 +1,150 @@
+---
+title: "Checkout Flow"
+description: "The complete 4-step user journey from product selection through payment result."
+---
+
+The checkout is a linear, four-step flow managed by Redux (`checkoutSlice`) and three React Router routes. Each step maps to a specific route and Redux state.
+
+| Step | Route | Component | Redux `currentStep` |
+|------|-------|-----------|---------------------|
+| 1 | `/` | `ProductPage` | `1` |
+| 2 | `/checkout` | `CheckoutPage` (form) | `2` |
+| 3 | `/checkout` | `CheckoutPage` (summary) | `3` |
+| 4 | `/result` | `ResultPage` | `4` |
+
+Any unknown route redirects to `/`.
+
+---
+
+## Step-by-step walkthrough
+
+<Steps>
+  <Step title="Step 1 — Product selection (ProductPage)">
+    `ProductPage` mounts at `/` and dispatches `fetchProducts` (an async thunk from `productSlice`) to load the product catalogue from `GET /api/products`.
+
+    The user sees a product card grid. Each card displays the product name, description, price (formatted from centavos with `formatCurrency`), and a stock badge.
+
+    When the user clicks **Buy**, the `selectProduct(productId)` action is dispatched:
+
+    ```typescript
+    // checkoutSlice.ts
+    selectProduct: (state, action: PayloadAction<string>) => {
+      state.selectedProductId = action.payload;
+      state.currentStep = 2;
+    },
+    ```
+
+    This sets `selectedProductId` to the product UUID and advances `currentStep` to `2`, which causes React Router to navigate to `/checkout`.
+
+    **`productSlice` state shape:**
+
+    | Field | Type | Description |
+    |-------|------|-------------|
+    | `items` | `Product[]` | Loaded product list |
+    | `loading` | `boolean` | `true` while fetching |
+    | `error` | `string \| null` | Error message if fetch failed |
+  </Step>
+
+  <Step title="Step 2 — Card and delivery form (CheckoutPage / CreditCardForm)">
+    `CheckoutPage` renders the `CreditCardForm` component when `currentStep === 2`. The form is built with React Hook Form 7 and validates all fields before allowing the user to proceed.
+
+    **Form validation rules:**
+
+    | Field | Rules |
+    |-------|-------|
+    | Card number | Required · 16 digits · Luhn algorithm (`validateLuhn`) |
+    | Cardholder name | Required · minimum 3 characters |
+    | Expiry (MM/AA) | Required · format `^\d{2}/\d{2}$` · month 1–12 · year ≥ 2024 · not expired |
+    | CVV | Required · 3–4 digits |
+    | Full name | Required · minimum 3 characters |
+    | Email | Required · valid email format |
+    | Phone | Optional · 7–10 digits if provided |
+    | Address | Required · minimum 5 characters |
+    | City | Required |
+    | Department | Required |
+
+    Card brand is detected in real time as the user types:
+    - **Visa** — number starts with `4`
+    - **Mastercard** — starts with `51`–`55`, or 4-digit prefix in range `2221`–`2720`
+
+    Card number input is auto-formatted into groups of 4 (`4111 1111 1111 1111`) using `formatCardNumber` from `card.utils.ts`.
+
+    On valid submission, the form calls `setCardData(cardData)` and `setDeliveryData(deliveryData)` to persist data in Redux, then dispatches `goToSummary()` which sets `currentStep` to `3`.
+  </Step>
+
+  <Step title="Step 3 — Order summary (PaymentSummary)">
+    `CheckoutPage` renders the `PaymentSummary` component when `currentStep === 3`. The user reviews all details before confirming.
+
+    **Price breakdown displayed:**
+
+    | Line item | Source |
+    |-----------|--------|
+    | Product price | `product.priceInCents` from Redux |
+    | Base fee | `BASE_FEE_IN_CENTS` (default $3.000 COP / 300 000 centavos) |
+    | Delivery fee | `DELIVERY_FEE_IN_CENTS` (default $2.000 COP / 200 000 centavos) |
+    | **Total** | Sum of the three values above |
+
+    All amounts are displayed using `formatCurrency(cents)` which formats centavos as Colombian pesos (`es-CO` locale, COP currency, no decimal places).
+
+    When the user clicks **Confirm and pay**, the app:
+    1. Dispatches `startProcessing()` — sets `isProcessing: true`, clears any previous error.
+    2. Calls `paymentService.getAcceptanceToken()` → stores result with `setAcceptanceToken(token)`.
+    3. Calls `paymentService.tokenizeCard(cardData)` → stores result with `setCardToken(token)`.
+    4. Calls `paymentService.processPayment(...)` → sends token + delivery data to the backend.
+    5. Polls for the final status with `paymentService.pollTransactionStatus(transactionId)`.
+    6. Dispatches `paymentSuccess(result)` or `paymentFailed(message)` — both advance `currentStep` to `4`.
+  </Step>
+
+  <Step title="Step 4 — Result page (ResultPage)">
+    `ResultPage` renders at `/result` when `currentStep === 4`. The component reads `transactionResult` from `checkoutSlice` and shows one of three states:
+
+    | Status | What the user sees |
+    |--------|-------------------|
+    | `APPROVED` | Success message, order reference, product name, total amount, delivery city |
+    | `DECLINED` | Declined notice, reason if available, option to retry |
+    | `ERROR` / `VOIDED` | Error message, option to return to start |
+
+    A **Start over** button dispatches `resetCheckout()` which:
+    - Removes `checkout_progress` and `checkout_form_draft` from `localStorage`
+    - Resets the entire `checkoutSlice` state to its initial values
+    - Navigates back to `/`
+  </Step>
+</Steps>
+
+---
+
+## Redux state reference
+
+All checkout state lives in `checkoutSlice` (store key: `checkout`):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `currentStep` | `1 \| 2 \| 3 \| 4 \| 5` | Current flow step (5 = reset in progress) |
+| `selectedProductId` | `string \| null` | UUID of the selected product |
+| `cardData` | `CardData \| null` | Full card data (never sent to backend) |
+| `deliveryData` | `DeliveryData \| null` | Customer name, email, phone, address |
+| `cardToken` | `string \| null` | Wompi card token |
+| `acceptanceToken` | `string \| null` | Wompi acceptance token |
+| `transactionId` | `string \| null` | Backend transaction UUID |
+| `transactionResult` | `TransactionResult \| null` | Final payment result |
+| `isProcessing` | `boolean` | `true` while payment is in flight |
+| `error` | `string \| null` | Error message from a failed payment |
+
+**Available actions:** `selectProduct`, `setCardData`, `setCardToken`, `setDeliveryData`, `setAcceptanceToken`, `goToSummary`, `startProcessing`, `paymentSuccess`, `paymentFailed`, `resetCheckout`, `setStep`.
+
+---
+
+## localStorage persistence
+
+The slice persists a subset of state to `localStorage` under the key `checkout_progress` to survive page reloads:
+
+```typescript
+// Fields persisted:
+// currentStep, selectedProductId, deliveryData, transactionId, transactionResult
+```
+
+<Note>
+Step 3 (summary) is intentionally not restored on reload — the slice maps a persisted `currentStep === 3` back to `2` so the user re-enters the form rather than landing on an unpopulated summary.
+</Note>
+
+Persistence is cleared on `resetCheckout()`. The key `checkout_form_draft` (used by `CreditCardForm` to preserve draft input) is also removed at that point.

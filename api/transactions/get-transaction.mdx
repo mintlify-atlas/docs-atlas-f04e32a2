@@ -1,0 +1,134 @@
+---
+title: "Get Transaction"
+description: "Returns the full details of a transaction by its UUID, including related customer and product data."
+---
+
+## `GET /api/transactions/:id`
+
+Retrieves a single transaction record by UUID. The response includes the full transaction entity with its associated customer and product relations.
+
+## Request
+
+### Path Parameters
+
+<ParamField path="id" type="string (UUID)" required>
+  The UUID of the transaction to retrieve.
+</ParamField>
+
+```bash
+curl -X GET https://your-api.example.com/api/transactions/7f3a1c2d-4e5b-6789-abcd-ef0123456789
+```
+
+## Response
+
+<ResponseField name="success" type="boolean">
+  Always `true` on a successful response.
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  The full transaction entity.
+
+  <Expandable title="properties">
+    <ResponseField name="id" type="string (UUID)">
+      Unique identifier of the transaction.
+    </ResponseField>
+
+    <ResponseField name="reference" type="string">
+      Unique reference sent to Wompi. Format: `TXN-{timestamp}-{random}`.
+    </ResponseField>
+
+    <ResponseField name="customerId" type="string (UUID)">
+      UUID of the customer who made the purchase.
+    </ResponseField>
+
+    <ResponseField name="productId" type="string (UUID)">
+      UUID of the purchased product.
+    </ResponseField>
+
+    <ResponseField name="productAmountInCents" type="integer">
+      Product price at the time of purchase, in COP centavos.
+    </ResponseField>
+
+    <ResponseField name="baseFeeInCents" type="integer">
+      Platform base fee in COP centavos (configured via `BASE_FEE_IN_CENTS`, default `300000` = $3.000 COP).
+    </ResponseField>
+
+    <ResponseField name="deliveryFeeInCents" type="integer">
+      Delivery fee in COP centavos (configured via `DELIVERY_FEE_IN_CENTS`, default `200000` = $2.000 COP).
+    </ResponseField>
+
+    <ResponseField name="totalInCents" type="integer">
+      Total charged amount in COP centavos. Equals `productAmountInCents + baseFeeInCents + deliveryFeeInCents`.
+    </ResponseField>
+
+    <ResponseField name="status" type="string (enum)">
+      Current transaction status. One of: `PENDING`, `APPROVED`, `DECLINED`, `ERROR`, `VOIDED`.
+    </ResponseField>
+
+    <ResponseField name="gatewayTransactionId" type="string | null">
+      Transaction ID assigned by Wompi. `null` if Wompi was not reached.
+    </ResponseField>
+
+    <ResponseField name="cardLastFour" type="string | null">
+      Last four digits of the card used. `null` if not captured.
+    </ResponseField>
+
+    <ResponseField name="deliveryAddress" type="string">
+      Street address for delivery.
+    </ResponseField>
+
+    <ResponseField name="deliveryCity" type="string">
+      City for delivery.
+    </ResponseField>
+
+    <ResponseField name="deliveryDepartment" type="string">
+      Department (state/province) for delivery.
+    </ResponseField>
+
+    <ResponseField name="createdAt" type="string (ISO 8601)">
+      Timestamp when the transaction was created.
+    </ResponseField>
+
+    <ResponseField name="updatedAt" type="string (ISO 8601)">
+      Timestamp when the transaction was last updated.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": "7f3a1c2d-4e5b-6789-abcd-ef0123456789",
+    "reference": "TXN-1700000000000-AB3X9Z",
+    "customerId": "a1b2c3d4-e5f6-7890-abcd-ef0123456789",
+    "productId": "550e8400-e29b-41d4-a716-446655440000",
+    "productAmountInCents": 15000000,
+    "baseFeeInCents": 300000,
+    "deliveryFeeInCents": 200000,
+    "totalInCents": 15500000,
+    "status": "APPROVED",
+    "gatewayTransactionId": "wompi-txn-abc123",
+    "cardLastFour": "4242",
+    "deliveryAddress": "Calle 123 # 45-67, Apto 201",
+    "deliveryCity": "Bogotá",
+    "deliveryDepartment": "Cundinamarca",
+    "createdAt": "2024-01-15T10:30:00.000Z",
+    "updatedAt": "2024-01-15T10:30:05.000Z"
+  }
+}
+```
+
+## Error Responses
+
+| Status | `success` | Description |
+|--------|-----------|-------------|
+| `404`  | `false`   | No transaction exists with the given UUID. |
+| `500`  | `false`   | Internal server error. |
+
+```json
+{
+  "success": false,
+  "message": "Transacción no encontrada"
+}
+```
