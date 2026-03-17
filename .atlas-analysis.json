@@ -1,0 +1,84 @@
+{
+  "projectType": "saas",
+  "projectName": "Mi Tienda — Payment Checkout App",
+  "projectDescription": "A full-stack checkout application integrated with the Wompi payment gateway that lets users select products, enter delivery and card details, and receive real-time payment results.",
+  "theme": "almond",
+  "primaryColor": "#fbc926",
+  "lightColor": "#8c73fa",
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Overview",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": ["introduction", "quickstart"]
+          },
+          {
+            "group": "Architecture",
+            "pages": ["architecture/overview", "architecture/backend", "architecture/frontend"]
+          }
+        ]
+      },
+      {
+        "tab": "Guides",
+        "groups": [
+          {
+            "group": "Checkout Flow",
+            "pages": ["guides/checkout-flow", "guides/card-tokenization", "guides/payment-processing"]
+          },
+          {
+            "group": "Configuration",
+            "pages": ["guides/environment-variables", "guides/database-setup", "guides/wompi-setup"]
+          },
+          {
+            "group": "Testing",
+            "pages": ["guides/running-tests", "guides/test-coverage"]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Products",
+            "pages": ["api/products/list-products", "api/products/get-product"]
+          },
+          {
+            "group": "Payments",
+            "pages": ["api/payments/acceptance-token"]
+          },
+          {
+            "group": "Transactions",
+            "pages": ["api/transactions/process-payment", "api/transactions/get-transaction", "api/transactions/get-transaction-status"]
+          },
+          {
+            "group": "Deliveries",
+            "pages": ["api/deliveries/get-delivery"]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "4-step checkout flow: product selection → payment form → order summary → result",
+    "Secure card tokenization directly with Wompi (card data never sent to backend)",
+    "Real-time transaction status polling (up to 12 attempts at 2.5s intervals)",
+    "Clean Architecture backend with NestJS, TypeORM, and PostgreSQL",
+    "React 19 SPA with Redux Toolkit state management and checkout progress persistence",
+    "Automatic product seeding on startup with 3 demo products",
+    "125 backend unit tests with ~99% code coverage",
+    "Swagger/OpenAPI documentation at /api/docs",
+    "Integrity hash validation using SHA-256 for Wompi transactions"
+  ],
+  "publicApiSurface": [
+    "GET /api/products",
+    "GET /api/products/:id",
+    "GET /api/payments/acceptance-token",
+    "POST /api/transactions",
+    "GET /api/transactions/:id",
+    "GET /api/transactions/:id/status",
+    "GET /api/deliveries/transaction/:transactionId"
+  ]
+}
